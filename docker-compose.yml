@@ -1,0 +1,152 @@
+
+services:
+  # --- API Gateway & Orchestrator ---
+  api:
+    build: 
+      context: .
+      dockerfile: api/Dockerfile
+    environment:
+      - REDIS_HOST=redis
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+    deploy:
+      replicas: 3
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      loki:
+        condition: service_started
+
+  # --- Nginx Gateway (The Receptionist) ---
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+
+  # --- Redis (The Idempotency Diary) ---
+  redis:
+    image: redis:alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  redis-insight:
+    image: redis/redisinsight:latest
+    user: root
+    ports:
+      - "8001:5540"
+    environment:
+      - RI_APP_PORT=5540 
+      - RI_PROXY_PATH=/redis/
+    volumes:
+      - redis-insight-data:/data
+    depends_on:
+      - redis
+
+  # --- Kafka Infrastructure (The Loudspeaker) ---
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "29092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafdrop:
+    image: obsidiandynamics/kafdrop
+    ports:
+      - "9000:9000"
+    environment:
+      KAFKA_BROKERCONNECT: "kafka:29092"
+    depends_on:
+      - kafka
+
+  # --- Workers (The Saga Relay Race) ---
+  inventory-worker:
+    build:
+      context: .
+      dockerfile: workers/inventory/Dockerfile
+    depends_on:
+      - kafka
+      - redis
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - REDIS_URL=redis://redis:6379
+
+  payment-worker:
+    build:
+      context: .
+      dockerfile: workers/payment/Dockerfile
+    depends_on:
+      - kafka
+      - redis
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - REDIS_URL=redis://redis:6379
+
+  shipping-worker:
+    build:
+      context: .
+      dockerfile: workers/shipping/Dockerfile
+    depends_on:
+      - kafka
+      - redis
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - REDIS_URL=redis://redis:6379
+
+  # --- Observability (Metrics & Logs) ---
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - api
+
+  loki:
+    image: grafana/loki:latest
+    container_name: lok
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+
+volumes:
+     grafana-storage:
+     redis-insight-data:

@@ -1,0 +1,5 @@
+aiokafka==0.12.0
+redis
+pydantic==2.6.1
+python-dotenv==1.0.1
+fastavro

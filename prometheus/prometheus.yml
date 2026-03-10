@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'fastapi-cluster'
+    static_configs:
+      - targets: ['api:8000']
+
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka:29092']

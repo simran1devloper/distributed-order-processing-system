@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+redis
+aiokafka
+pydantic
+fastavro
